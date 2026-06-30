@@ -68,7 +68,3 @@ That is the difference between documenting governance and engineering it.
 ## Green PR demonstration
 
 This change uses the compliant `plan.json` and should pass the `grc-gate` workflow.
-
-## Green PR demonstration
-
-This change uses the compliant `plan.json` and should pass the `grc-gate` workflow.

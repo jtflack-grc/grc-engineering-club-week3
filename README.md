@@ -64,3 +64,11 @@ A control that only exists in a spreadsheet depends on someone remembering to re
 A control wired into a pull-request gate runs every time, the same way, before the change can merge.
 
 That is the difference between documenting governance and engineering it.
+
+## Green PR demonstration
+
+This change uses the compliant `plan.json` and should pass the `grc-gate` workflow.
+
+## Green PR demonstration
+
+This change uses the compliant `plan.json` and should pass the `grc-gate` workflow.

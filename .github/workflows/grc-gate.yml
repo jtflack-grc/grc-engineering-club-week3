@@ -1,0 +1,129 @@
+# grc-gate: run executable GRC controls on every pull request.
+name: grc-gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  grc-gate:
+    name: grc-gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Conftest
+        env:
+          CONFTEST_VERSION: "0.68.2"
+        run: |
+          set -euo pipefail
+          curl -L \
+            -o conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar -xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/conftest
+          conftest --version
+
+      - name: Run GRC policy gate
+        id: grc_gate
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          PLAN="plan.json"
+          POLICY_DIR="policies"
+          mkdir -p evidence
+          : > evidence/gate-summary.txt
+
+          if [[ ! -f "$PLAN" ]]; then
+            echo "Missing required Terraform plan evidence: $PLAN" | tee -a evidence/gate-summary.txt
+            exit 1
+          fi
+
+          if [[ ! -d "$POLICY_DIR" ]]; then
+            echo "Missing required policy directory: $POLICY_DIR" | tee -a evidence/gate-summary.txt
+            exit 1
+          fi
+
+          fail=0
+
+          run_check() {
+            local label="$1"
+            local namespace="$2"
+            local json_file="evidence/${label}.json"
+            local stderr_file="evidence/${label}.stderr.txt"
+
+            echo "Running ${namespace} against ${PLAN}" | tee -a evidence/gate-summary.txt
+
+            if conftest test "$PLAN" \
+              --policy "$POLICY_DIR" \
+              --namespace "$namespace" \
+              --output json \
+              > "$json_file" \
+              2> "$stderr_file"; then
+              echo "${label}=pass" | tee -a evidence/gate-summary.txt
+            else
+              local code=$?
+              echo "${label}=fail exit_code=${code}" | tee -a evidence/gate-summary.txt
+              fail=1
+            fi
+
+            # Keep the aggregate JSON build from failing if Conftest emitted no JSON
+            # because of an unexpected runtime/parsing error.
+            if [[ ! -s "$json_file" ]]; then
+              echo '[]' > "$json_file"
+            fi
+          }
+
+          run_check "sc28" "compliance.sc28_aws"
+          run_check "ac3" "compliance.ac3_aws"
+          run_check "cm6" "compliance.cm6_aws"
+
+          conclusion="pass"
+          if [[ "$fail" -ne 0 ]]; then
+            conclusion="fail"
+          fi
+
+          jq -n \
+            --arg plan "$PLAN" \
+            --arg policy_dir "$POLICY_DIR" \
+            --arg conclusion "$conclusion" \
+            --slurpfile sc28 evidence/sc28.json \
+            --slurpfile ac3 evidence/ac3.json \
+            --slurpfile cm6 evidence/cm6.json \
+            '{
+              plan: $plan,
+              policy_dir: $policy_dir,
+              conclusion: $conclusion,
+              namespaces: {
+                sc28: "compliance.sc28_aws",
+                ac3: "compliance.ac3_aws",
+                cm6: "compliance.cm6_aws"
+              },
+              results: {
+                sc28: $sc28[0],
+                ac3: $ac3[0],
+                cm6: $cm6[0]
+              }
+            }' > evidence/conftest-results.json
+
+          echo ""
+          echo "GRC gate summary"
+          cat evidence/gate-summary.txt
+
+          exit "$fail"
+
+      - name: Upload GRC gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grc-gate-evidence
+          path: evidence/
+          if-no-files-found: error
